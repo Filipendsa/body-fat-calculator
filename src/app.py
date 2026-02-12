@@ -24,6 +24,8 @@ from src.modules.services.calculator import CalculatorService
 from src.modules.services.report_service import ReportService
 from src.modules.services.email_service import EmailService
 from src.modules.ui.components import SectionCard, DetailRow, ComparisonRow, AssessmentItem, LabelledSlider
+from src.modules.ui.diet_screen import DietScreen
+from src.modules.ui.diet_setup_screen import DietSetupScreen
 
 class FitnessApp(MDApp):
     current_user = DictProperty(None, allownone=True)
@@ -111,7 +113,16 @@ class FitnessApp(MDApp):
         form_layout.add_widget(MDRaisedButton(text="SALVAR AVALIAÇÃO", size_hint_x=1, height="50dp", md_bg_color=(0, 0.7, 0, 1), on_release=self.calculate_and_save))
         scroll.add_widget(form_layout); screen_new.add_widget(scroll); self.bottom_nav.add_widget(screen_new)
 
-        # --- ABA 3: HISTÓRICO ---
+        # ABA 3: NUTRIÇÃO (Lógica dinâmica)
+        self.screen_diet_nav = MDBottomNavigationItem(name='screen_diet', text='Nutrição', icon='food-apple')
+        self.diet_container = MDBoxLayout() # Container vazio para trocar telas
+        self.screen_diet_nav.add_widget(self.diet_container)
+        self.bottom_nav.add_widget(self.screen_diet_nav)
+        
+        self.diet_view = DietScreen(self.db)
+        self.diet_setup_view = DietSetupScreen(self.db, save_callback=self.on_diet_setup_complete)
+        
+        # --- ABA 4: HISTÓRICO ---
         screen_history = MDBottomNavigationItem(name='screen_history', text='Histórico', icon='history', on_tab_press=self.load_history)
         self.history_list = MDList()
         scroll_hist = MDScrollView()
@@ -122,6 +133,7 @@ class FitnessApp(MDApp):
         self.root_layout.add_widget(self.bottom_nav)
         screen = MDScreen()
         screen.add_widget(self.root_layout)
+        
 
         Clock.schedule_once(self.set_default_sex, 0)
         Clock.schedule_once(lambda x: self.load_users(), 1)
@@ -190,8 +202,23 @@ class FitnessApp(MDApp):
             self.user_list.add_widget(item)
 
     def select_user(self, user):
-        self.current_user = user; self.toolbar.title = f"BioTracker - {user['name']}"; self.bottom_nav.switch_tab('screen_new')
-
+        self.current_user = user
+        self.toolbar.title = f"BioTracker - {user['name']}"
+        
+        # Verifica se o usuário já tem preferências de dieta salvas
+        settings = self.db.get_user_diet_settings(user['id'])
+        
+        self.diet_container.clear_widgets()
+        if settings:
+            # Se tem config, mostra a DIETA (Dashboard)
+            self.load_diet_dashboard(user['id'])
+        else:
+            # Se não tem, mostra o SETUP
+            self.diet_setup_view.load_data(user['id'])
+            self.diet_container.add_widget(self.diet_setup_view)
+        
+        self.bottom_nav.switch_tab('screen_new')
+        
     def set_default_sex(self, dt): self.sex_switch.active = True; self.label_sex.text = "Sexo: Masculino"
     def create_field(self, card, key, hint, mode): field = MDTextField(hint_text=hint, input_filter='float', mode="rectangle", size_hint_x=1); self.inputs[key] = field; card.add_input(field)
     def on_sex_change(self, instance, value): self.label_sex.text = "Sexo: Masculino" if value else "Sexo: Feminino"
@@ -200,6 +227,20 @@ class FitnessApp(MDApp):
         for field in self.inputs.values(): field.text = ""
         self.set_activity(1.2, "Sedentário"); self.set_diet_goal("Manter")
 
+    def on_diet_setup_complete(self, user_id):
+        """Chamado quando o usuário termina de configurar a dieta"""
+        self.show_dialog("Sucesso", "Preferências alimentares salvas!")
+        self.diet_container.clear_widgets()
+        self.load_diet_dashboard(user_id)
+
+    def load_diet_dashboard(self, user_id):
+        # Pega a última avaliação para saber as calorias alvo
+        last_assessment = self.db.get_history(user_id)
+        target_data = last_assessment[0] if last_assessment else None
+        
+        self.diet_view.load_diet(user_id, target_data)
+        self.diet_container.add_widget(self.diet_view)
+        
     def calculate_and_save(self, instance):
         if not self.current_user: self.bottom_nav.switch_tab('screen_users'); return
         try:
@@ -279,14 +320,31 @@ class FitnessApp(MDApp):
 
     def show_detail_modal(self, item=None, data=None):
         record = item.data if item else data
-        content = MDBoxLayout(orientation="vertical", adaptive_height=True, spacing="5dp", padding="10dp")
         
-        btn_email = MDRaisedButton(text="ENVIAR RELATÓRIO PDF (EMAIL)", md_bg_color=(0.8, 0.2, 0.2, 1), size_hint_x=1, on_release=lambda x: self.action_send_email(record))
-        content.add_widget(btn_email); content.add_widget(MDRectangleFlatButton(size_hint_y=None, height="1dp", size_hint_x=1, opacity=0))
+        # Aumentamos o spacing e padding para não ficar exprimido
+        content = MDBoxLayout(orientation="vertical", adaptive_height=True, spacing=dp(12), padding=dp(15))
+        
+        btn_email = MDRaisedButton(
+            text="ENVIAR RELATÓRIO PDF (EMAIL)", 
+            md_bg_color=(0.8, 0.2, 0.2, 1), 
+            font_style="Subtitle2", # Fonte do botão mais encorpada
+            size_hint_x=1, 
+            height=dp(50), # Botão um pouco mais alto
+            on_release=lambda x: self.action_send_email(record)
+        )
+        content.add_widget(btn_email)
+        content.add_widget(MDBoxLayout(size_hint_y=None, height=dp(10))) # Espaço extra abaixo do botão
 
+        # --- A MÁGICA VISUAL ACONTECE AQUI ---
         def add_header(text): 
-            content.add_widget(MDLabel(text=text, font_style="Subtitle1", bold=True, size_hint_y=None, height=dp(30), theme_text_color="Primary"))
-            content.add_widget(MDRectangleFlatButton(size_hint_y=None, height="1dp", size_hint_x=1, md_bg_color=(0.8,0.8,0.8,1)))
+            # Título maior (H6) e usando a cor azul padrão do App
+            content.add_widget(MDLabel(text=text, font_style="H6", bold=True, size_hint_y=None, height=dp(40), theme_text_color="Primary"))
+            
+            # CORREÇÃO: Linha fina de 1 pixel elegante, em vez do botão quadrado cinza
+            content.add_widget(MDBoxLayout(size_hint_y=None, height=dp(1), md_bg_color=(0.8, 0.8, 0.8, 1)))
+            
+            # Espacinho abaixo da linha
+            content.add_widget(MDBoxLayout(size_hint_y=None, height=dp(5)))
         
         def add_rows(fields_list):
             for label, key, unit in fields_list:
@@ -294,22 +352,20 @@ class FitnessApp(MDApp):
                 val = val if val is not None else 0
                 val_str = f"{val:.2f} {unit}" if isinstance(val, (int, float)) else str(val)
                 content.add_widget(DetailRow(label, val_str))
-            content.add_widget(MDLabel(size_hint_y=None, height=dp(10)))
+            
+            # Espaço generoso entre o fim de um bloco e o próximo título
+            content.add_widget(MDBoxLayout(size_hint_y=None, height=dp(15)))
 
-        # --- SEÇÃO DIETA & METAS (LÓGICA CORRIGIDA) ---
+        # --- CONTEÚDO ---
         add_header("DIETA & METAS")
         
         target_bf = record.get('target_bf', 0)
-        
-        # Cálculo da Estimativa Semanal baseada nas Calorias (Kcal)
-        # 1kg de gordura corporal ~= 7700 kcal
         tdee = record.get('tdee', 0)
         target_kcal = record.get('target_kcal', 0)
         
         if tdee > 0 and target_kcal > 0:
-            daily_diff = target_kcal - tdee # Ex: 3200 - 2700 = +500 (Superávit)
-            weekly_caloric_diff = daily_diff * 7
-            weekly_weight_change = weekly_caloric_diff / 7700 # Converte kcal para kg
+            daily_diff = target_kcal - tdee 
+            weekly_weight_change = (daily_diff * 7) / 7700
             
             if weekly_weight_change > 0:
                 previsao_texto = f"Ganhar {weekly_weight_change:.2f} kg/sem"
@@ -321,16 +377,51 @@ class FitnessApp(MDApp):
             previsao_texto = "-"
 
         content.add_widget(DetailRow("Objetivo", record.get('diet_goal', '-')))
-        content.add_widget(DetailRow("Estimativa", previsao_texto)) # Agora mostra Ganho/Perda real
+        content.add_widget(DetailRow("Estimativa", previsao_texto))
         content.add_widget(DetailRow("Meta BF%", f"{target_bf:.1f}%"))
         
-        add_rows([("Calorias Dieta", "target_kcal", "kcal"), ("Proteína", "target_prot", "g"), ("Carbo", "target_carb", "g"), ("Gordura", "target_fat", "g")])
+        add_rows([
+            ("Calorias Dieta", "target_kcal", "kcal"), 
+            ("Proteína", "target_prot", "g"), 
+            ("Carbo", "target_carb", "g"), 
+            ("Gordura", "target_fat", "g")
+        ])
 
-        add_header("METABOLISMO"); add_rows([("TMB (Basal)", "tmb", "kcal"), ("Atividade", "activity_level", ""), ("GET (Total)", "tdee", "kcal")])
-        add_header("COMPOSIÇÃO"); add_rows([("Gordura Corporal", "bf_percent", "%"), ("Classif. BF", "bf_class", ""), ("Massa Gorda", "fat_mass", "kg"), ("Massa Magra", "lean_mass", "kg"), ("IMC", "bmi", "kg/m²")])
+        add_header("METABOLISMO")
+        add_rows([
+            ("TMB (Basal)", "tmb", "kcal"), 
+            ("Atividade", "activity_level", ""), 
+            ("GET (Total)", "tdee", "kcal")
+        ])
         
-        scroll = MDScrollView(size_hint_y=None, height="500dp"); scroll.add_widget(content)
-        self.dialog = MDDialog(title=f"Avaliação: {record['date']}", type="custom", content_cls=scroll, buttons=[MDFlatButton(text="FECHAR", on_release=lambda x: self.dialog.dismiss())]); self.dialog.open()
+        add_header("COMPOSIÇÃO CORPORAL")
+        add_rows([
+            ("Gordura Corporal", "bf_percent", "%"), 
+            ("Classif. BF", "bf_class", ""), 
+            ("Massa Gorda", "fat_mass", "kg"), 
+            ("Massa Magra", "lean_mass", "kg"), 
+            ("IMC", "bmi", "kg/m²")
+        ])
+        
+        # ScrollView mais alto para acompanhar o novo tamanho do conteúdo
+        scroll = MDScrollView(size_hint_y=None, height="600dp") 
+        scroll.add_widget(content)
+        
+        self.dialog = MDDialog(
+            title=f"Avaliação de {record['date'].split(' ')[0]}", # Simplifica o título para só a data
+            type="custom", 
+            content_cls=scroll, 
+            buttons=[
+                MDFlatButton(
+                    text="FECHAR", 
+                    theme_text_color="Custom", 
+                    text_color=self.theme_cls.primary_color, 
+                    font_style="Button",
+                    on_release=lambda x: self.dialog.dismiss()
+                )
+            ]
+        )
+        self.dialog.open()
     def action_send_email(self, record):
         if not self.current_user.get('email'): self.show_dialog("Erro", "Usuário sem email."); return
         pdf_name = f"relatorio_{self.current_user['id']}_{record['id']}.pdf"

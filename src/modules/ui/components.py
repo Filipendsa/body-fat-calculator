@@ -61,18 +61,29 @@ class LabelledSlider(MDBoxLayout):
 # ... (DetailRow, ComparisonRow, AssessmentItem permanecem iguais)
 class DetailRow(MDBoxLayout):
     def __init__(self, label, value, **kwargs):
-        super().__init__(**kwargs); self.orientation = "horizontal"; self.size_hint_y = None; self.height = dp(24)
-        self.add_widget(MDLabel(text=label, bold=True, size_hint_x=0.6, theme_text_color="Primary", font_style="Body2"))
-        self.add_widget(MDLabel(text=str(value), halign="right", size_hint_x=0.4, theme_text_color="Secondary", font_style="Body2"))
+        super().__init__(**kwargs)
+        self.orientation = "horizontal"
+        self.size_hint_y = None
+        self.height = dp(32) # Aumentado para respirar mais
+        
+        # Mudamos font_style para "Body1" (Maior e mais legível)
+        self.add_widget(MDLabel(text=label, bold=True, size_hint_x=0.6, theme_text_color="Primary", font_style="Body1"))
+        self.add_widget(MDLabel(text=str(value), halign="right", size_hint_x=0.4, theme_text_color="Secondary", font_style="Body1"))
 
 class ComparisonRow(MDBoxLayout):
     def __init__(self, label, val_r, val_l, **kwargs):
-        super().__init__(**kwargs); self.orientation = "horizontal"; self.size_hint_y = None; self.height = dp(24)
+        super().__init__(**kwargs)
+        self.orientation = "horizontal"
+        self.size_hint_y = None
+        self.height = dp(32) # Aumentado
+        
         diff = abs(val_r - val_l)
-        self.add_widget(MDLabel(text=label, bold=True, size_hint_x=0.4, font_style="Body2"))
-        self.add_widget(MDLabel(text=f"D: {val_r}", halign="center", size_hint_x=0.2, font_style="Caption"))
-        self.add_widget(MDLabel(text=f"E: {val_l}", halign="center", size_hint_x=0.2, font_style="Caption"))
-        self.add_widget(MDLabel(text=f"Δ: {diff:.1f}", halign="right", size_hint_x=0.2, font_style="Caption", markup=True))
+        # Fontes maiores e destaque de cor se a diferença for muito alta (> 15)
+        self.add_widget(MDLabel(text=label, bold=True, size_hint_x=0.4, font_style="Body1"))
+        self.add_widget(MDLabel(text=f"D: {val_r}", halign="center", size_hint_x=0.2, font_style="Body2"))
+        self.add_widget(MDLabel(text=f"E: {val_l}", halign="center", size_hint_x=0.2, font_style="Body2"))
+        self.add_widget(MDLabel(text=f"Δ: {diff:.1f}", halign="right", size_hint_x=0.2, font_style="Body2", 
+                                theme_text_color="Error" if diff > 15 else "Primary"))
 
 class AssessmentItem(ThreeLineAvatarIconListItem):
     data = DictProperty({})
