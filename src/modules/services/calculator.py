@@ -3,12 +3,23 @@ import math
 class CalculatorService:
     @staticmethod
     def calculate_bmr_tdee(sex, weight, height_m, age, activity_factor):
-        # Fórmula Harris-Benedict Revisada
+        """
+        Calcula TMB (Taxa Metabólica Basal) e GET (Gasto Energético Total).
+        Fórmula: Mifflin-St Jeor (1990) - Considerada a mais precisa atualmente.
+        """
+        # A fórmula exige altura em cm
         height_cm = height_m * 100
+        
+        # Base do cálculo: (10 x Peso) + (6.25 x Altura) - (5 x Idade)
+        base_bmr = (10 * weight) + (6.25 * height_cm) - (5 * age)
+        
         if sex == "Masculino":
-            bmr = 66.5 + (13.75 * weight) + (5.003 * height_cm) - (6.75 * age)
+            # Homens: Base + 5
+            bmr = base_bmr + 5
         else:
-            bmr = 655.1 + (9.563 * weight) + (1.850 * height_cm) - (4.676 * age)
+            # Mulheres: Base - 161
+            bmr = base_bmr - 161
+            
         tdee = bmr * activity_factor
         return bmr, tdee
 
@@ -29,12 +40,10 @@ class CalculatorService:
     @staticmethod
     def calculate_diet_macros(tdee, weight, goal, intensity_pct, protein_g_kg):
         """
-        Calcula a dieta. 
-        Mantemos a gordura da dieta fixa em 25% das calorias totais 
-        para que o usuário não precise configurar isso manualmente,
-        focando apenas na Meta de Gordura Corporal na UI.
+        Calcula a dieta com base no TMB (Mifflin) e GET.
+        Gordura fixa em 25% das calorias (equilíbrio hormonal).
         """
-        # 1. Calorias Alvo
+        # 1. Calorias Alvo (Déficit ou Superávit)
         if goal == "Cutting":
             target_kcal = tdee * (1 - (intensity_pct / 100))
         elif goal == "Bulking":
@@ -58,10 +67,10 @@ class CalculatorService:
 
     @staticmethod
     def calculate_results(sex, age, weight, height, folds, perims, activity_factor=1.2, diet_config=None):
+        # --- Composição Corporal (Pollock 7 Dobras) ---
         s7 = sum([folds[k] for k in ['chest','axillary','tricep','subscapular','abdominal','suprailiac','thigh']])
         s7_sq = s7 ** 2
         
-        # Densidade e BF
         if sex == "Masculino":
             density = 1.112 - (0.00043499*s7) + (0.00000055*s7_sq) - (0.00028826*age)
         else:
@@ -81,10 +90,10 @@ class CalculatorService:
         try: tma = ((perims.get('thigh_r',0) - (math.pi * (folds['thigh']/10))) ** 2) / (4 * math.pi)
         except: tma = 0
         
-        # Metabolismo
+        # --- Metabolismo (Mifflin-St Jeor) ---
         tmb, tdee = CalculatorService.calculate_bmr_tdee(sex, weight, height, age, activity_factor)
 
-        # DIETA (Correção aqui: não pede mais 'fat_pct')
+        # --- Dieta ---
         d_kcal = tdee; d_prot = 0; d_carb = 0; d_fat = 0
         if diet_config:
             d_kcal, d_prot, d_carb, d_fat = CalculatorService.calculate_diet_macros(
