@@ -70,7 +70,7 @@ class DatabaseHandler:
         cursor.execute("SELECT count(*) FROM foods")
         
         # Popula apenas se o banco estiver vazio ou com poucos itens
-        if cursor.fetchone()[0] < 40: 
+        if cursor.fetchone()[0] < 50: 
             foods_data = [
                 # --- PROTEÍNAS ANIMAIS (LIMPAS - Levítico 11) ---
                 ("Peito de Frango Grelhado", "Proteína", "g", 100, 159, 31, 0, 3.6, "carnivore,paleo,onivoro"),
