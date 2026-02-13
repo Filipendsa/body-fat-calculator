@@ -115,6 +115,15 @@ class DietScreen(MDScreen):
         btn_recalc.bind(on_release=self.recalculate_macros)
         header_layout.add_widget(btn_recalc)
         
+        btn_export = MDIconButton(
+            icon="file-pdf-box", 
+            theme_text_color="Custom", 
+            text_color=(0.8, 0.2, 0.2, 1), 
+            icon_size="24sp"
+        )
+        btn_export.bind(on_release=self.export_diet_plan)
+        header_layout.add_widget(btn_export)
+        
         self.summary_card.add_widget(header_layout)
         
         self.bars_layout = MDBoxLayout(orientation="vertical", spacing=10)
@@ -280,3 +289,23 @@ class DietScreen(MDScreen):
     def delete_item(self, log_id):
         self.db.remove_diet_item(log_id)
         self.load_diet(self.current_user_id, self.target_data)
+        
+    def export_diet_plan(self, instance):
+        from src.modules.services.diet_report_service import DietReportService
+        import os
+        
+        user_name = self.db.get_users()[0]['name'] # Simplificado para o exemplo
+        filename = f"dieta_{user_name.replace(' ', '_')}.pdf"
+        
+        # Pega os dados atuais da tela
+        diet_items = self.db.get_diet_log(self.current_user_id)
+        
+        DietReportService.generate_diet_pdf(
+            filename, 
+            {"name": user_name}, 
+            self.target_data, 
+            diet_items
+        )
+        
+        # Abre o PDF automaticamente no Windows
+        os.startfile(filename)
