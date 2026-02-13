@@ -292,20 +292,35 @@ class DietScreen(MDScreen):
         
     def export_diet_plan(self, instance):
         from src.modules.services.diet_report_service import DietReportService
+        from src.modules.services.email_service import EmailService
         import os
+
+        # CORREÇÃO: Busca o usuário completo no banco usando o ID que a tela possui
+        user = self.db.get_user_by_id(self.current_user_id)
+        if not user:
+            self.show_dialog("Erro", "Usuário não encontrado.")
+            return
+
+        user_name = user['name']
+        user_email = user['email']
+        filename = f"Dieta_{user_name.replace(' ', '_')}.pdf"
         
-        user_name = self.db.get_users()[0]['name'] # Simplificado para o exemplo
-        filename = f"dieta_{user_name.replace(' ', '_')}.pdf"
-        
-        # Pega os dados atuais da tela
+        # Pega a dieta atual
         diet_items = self.db.get_diet_log(self.current_user_id)
         
-        DietReportService.generate_diet_pdf(
+        # Gera o PDF específico da dieta
+        path = DietReportService.generate_diet_pdf(
             filename, 
             {"name": user_name}, 
             self.target_data, 
             diet_items
         )
         
-        # Abre o PDF automaticamente no Windows
-        os.startfile(filename)
+        # Envia o e-mail
+        EmailService.send_email_thread(
+            user_email, user_name, path,
+            callback_success=lambda: self.show_dialog("Enviado", "Plano alimentar enviado com sucesso!"),
+            callback_error=lambda err: self.show_dialog("Erro", f"Falha no e-mail: {err}")
+        )
+    def show_dialog(self, title, text):
+        d = MDDialog(title=title, text=text, buttons=[MDFlatButton(text="OK", on_release=lambda x: d.dismiss())]); d.open()

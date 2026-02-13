@@ -4,10 +4,10 @@ from src.config import DATABASE_NAME
 class DatabaseHandler:
     def __init__(self):
         self.conn = sqlite3.connect(DATABASE_NAME)
-        self.create_tables()
-        self.migrate_db()
+        # self.create_tables()
+        # self.migrate_db()
         self.seed_food_database() 
-        self.cleanup_duplicates()
+        # self.cleanup_duplicates()
 
     def create_tables(self):
         cursor = self.conn.cursor()
@@ -160,6 +160,10 @@ class DatabaseHandler:
             (user_id, "Lanche", ids.get("Ovo de Galinha (Inteiro)"), 2),
             (user_id, "Lanche", ids.get("Laranja Pera"), 2),
             (user_id, "Lanche", ids.get("Requeijão Light"), 10)
+            (user_id, "Jantar", ids.get("Whey Protein Concentrado"), 30),
+            (user_id, "Jantar", ids.get("Aveia em Flocos"), 20),
+            (user_id, "Jantar", ids.get("Banana Nanica"), 1),
+            (user_id, "Jantar", ids.get("Pasta de Amendoim"), 15),
         ]
         
         # Filtra itens que por acaso não existam no banco
@@ -321,3 +325,25 @@ class DatabaseHandler:
         
         self.conn.commit()
         print("Limpeza de duplicatas concluída!")
+        
+    def add_diet_entry(self, user_id, meal_name, food_id, quantity):
+        """Adiciona um item ao log de dieta e garante a gravação"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                INSERT INTO diet_log (user_id, meal_name, food_id, quantity)
+                VALUES (?, ?, ?, ?)
+            """, (user_id, meal_name, food_id, quantity))
+            self.conn.commit() # VITAL para salvar no disco
+            return True
+        except Exception as e:
+            print(f"Erro ao salvar dieta: {e}")
+            return False
+        
+    def get_user_by_id(self, user_id):
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT id, name, email FROM users WHERE id = ?", (user_id,))
+        row = cursor.fetchone()
+        if row:
+            return {"id": row[0], "name": row[1], "email": row[2]}
+        return None
