@@ -10,20 +10,20 @@ from kivymd.uix.selectioncontrol import MDSwitch
 from kivymd.uix.scrollview import MDScrollView
 from kivymd.uix.toolbar import MDTopAppBar
 from kivymd.uix.bottomnavigation import MDBottomNavigation, MDBottomNavigationItem
-# ADICIONADO: IconRightWidget
 from kivymd.uix.list import MDList, IconLeftWidget, IconRightWidget, OneLineAvatarIconListItem, OneLineListItem
 from kivy.clock import Clock
 from kivy.properties import DictProperty
 from kivy.metrics import dp
 from kivymd.uix.gridlayout import MDGridLayout
+from kivymd.uix.slider import MDSlider
+from kivymd.uix.card import MDCard  # <--- FALTAVA ESSE
 
-# Importando Módulos
 from src.config import ACTIVITY_LEVELS
 from src.database.db_handler import DatabaseHandler
 from src.modules.services.calculator import CalculatorService
 from src.modules.services.report_service import ReportService
 from src.modules.services.email_service import EmailService
-from src.modules.ui.components import SectionCard, DetailRow, ComparisonRow, AssessmentItem, LabelledSlider
+from src.modules.ui.components import SectionCard, AssessmentItem, LabelledSlider
 from src.modules.ui.diet_screen import DietScreen
 from src.modules.ui.diet_setup_screen import DietSetupScreen
 
@@ -205,15 +205,42 @@ class FitnessApp(MDApp):
         self.current_user = user
         self.toolbar.title = f"BioTracker - {user['name']}"
         
-        # Verifica se o usuário já tem preferências de dieta salvas
-        settings = self.db.get_user_diet_settings(user['id'])
+        # 1. Verifica se a dieta já tem itens
+        history = self.db.get_diet_log(user['id'])
         
+        if not history:
+            # Diálogo de confirmação
+            self.dialog_import = MDDialog(
+                title="Importar Dieta Padrão?",
+                text="Deseja carregar a dieta baseada no plano de 2.600kcal (PDF Marcos Conti)?",
+                buttons=[
+                    MDFlatButton(text="NÃO", on_release=lambda x: self.finish_selection(user)),
+                    MDRaisedButton(
+                        text="IMPORTAR", 
+                        md_bg_color=self.theme_cls.primary_color,
+                        on_release=lambda x: self.execute_import(user)
+                    )
+                ]
+            )
+            self.dialog_import.open()
+        else:
+            self.finish_selection(user)
+
+    def execute_import(self, user):
+        self.db.import_sample_diet(user['id'])
+        self.dialog_import.dismiss()
+        self.finish_selection(user)
+        self.show_dialog("Sucesso", "Dieta importada com sucesso!")
+
+    def finish_selection(self, user):
+        if hasattr(self, 'dialog_import'): self.dialog_import.dismiss()
+        
+        settings = self.db.get_user_diet_settings(user['id'])
         self.diet_container.clear_widgets()
+        
         if settings:
-            # Se tem config, mostra a DIETA (Dashboard)
             self.load_diet_dashboard(user['id'])
         else:
-            # Se não tem, mostra o SETUP
             self.diet_setup_view.load_data(user['id'])
             self.diet_container.add_widget(self.diet_setup_view)
         
@@ -319,109 +346,268 @@ class FitnessApp(MDApp):
         self.show_dialog("Sucesso", "Registro excluído.")
 
     def show_detail_modal(self, item=None, data=None):
-        record = item.data if item else data
+        self.current_view_record = item.data if item else data
+        record = self.current_view_record
         
-        # Aumentamos o spacing e padding para não ficar exprimido
-        content = MDBoxLayout(orientation="vertical", adaptive_height=True, spacing=dp(12), padding=dp(15))
+        # --- CORES DO TEMA ---
+        C_PRIMARY = (0.1, 0.46, 0.82, 1) # Azul App
+        C_BG_CARD = (0.97, 0.97, 0.97, 1) # Cinza muito leve
         
-        btn_email = MDRaisedButton(
-            text="ENVIAR RELATÓRIO PDF (EMAIL)", 
-            md_bg_color=(0.8, 0.2, 0.2, 1), 
-            font_style="Subtitle2", # Fonte do botão mais encorpada
-            size_hint_x=1, 
-            height=dp(50), # Botão um pouco mais alto
-            on_release=lambda x: self.action_send_email(record)
-        )
-        content.add_widget(btn_email)
-        content.add_widget(MDBoxLayout(size_hint_y=None, height=dp(10))) # Espaço extra abaixo do botão
+        # ScrollView Principal
+        scroll = MDScrollView(size_hint_y=None, height=dp(550)) # Altura fixa grande
+        
+        # Container Principal
+        main_content = MDBoxLayout(orientation="vertical", spacing=dp(15), padding=dp(25), size_hint_y=None)
+        main_content.bind(minimum_height=main_content.setter('height'))
 
-        # --- A MÁGICA VISUAL ACONTECE AQUI ---
-        def add_header(text): 
-            # Título maior (H6) e usando a cor azul padrão do App
-            content.add_widget(MDLabel(text=text, font_style="H6", bold=True, size_hint_y=None, height=dp(40), theme_text_color="Primary"))
-            
-            # CORREÇÃO: Linha fina de 1 pixel elegante, em vez do botão quadrado cinza
-            content.add_widget(MDBoxLayout(size_hint_y=None, height=dp(1), md_bg_color=(0.8, 0.8, 0.8, 1)))
-            
-            # Espacinho abaixo da linha
-            content.add_widget(MDBoxLayout(size_hint_y=None, height=dp(5)))
+        # --- 1. CABEÇALHO (Data e Botões) ---
+        header = MDBoxLayout(size_hint_y=None, height=dp(50), spacing=dp(10))
         
-        def add_rows(fields_list):
-            for label, key, unit in fields_list:
-                val = record.get(key)
-                val = val if val is not None else 0
-                val_str = f"{val:.2f} {unit}" if isinstance(val, (int, float)) else str(val)
-                content.add_widget(DetailRow(label, val_str))
-            
-            # Espaço generoso entre o fim de um bloco e o próximo título
-            content.add_widget(MDBoxLayout(size_hint_y=None, height=dp(15)))
+        # Data Grande
+        date_txt = record['date'].split(' ')[0]
+        header.add_widget(MDLabel(text=f"Avaliação: {date_txt}", font_style="H5", bold=True, theme_text_color="Primary", size_hint_x=0.6))
+        
+        # Botões de Ação
+        btn_edit = MDIconButton(icon="pencil-outline", theme_text_color="Custom", text_color=C_PRIMARY, icon_size="28sp")
+        btn_edit.bind(on_release=lambda x: self.open_edit_metabolism_dialog(record))
+        
+        btn_pdf = MDRaisedButton(text="GERAR PDF", md_bg_color=(0.8, 0.2, 0.2, 1), font_style="Button")
+        btn_pdf.bind(on_release=lambda x: self.action_send_email(record))
+        
+        header.add_widget(btn_edit)
+        header.add_widget(btn_pdf)
+        main_content.add_widget(header)
 
-        # --- CONTEÚDO ---
-        add_header("DIETA & METAS")
+        # --- 2. GRID DE 2 COLUNAS ---
+        grid = MDGridLayout(cols=2, spacing=dp(30), size_hint_y=None, adaptive_height=True)
+
+        # === COLUNA ESQUERDA: DIETA & MACROS ===
+        col_diet = MDBoxLayout(orientation="vertical", spacing=dp(10), adaptive_height=True)
         
-        target_bf = record.get('target_bf', 0)
-        tdee = record.get('tdee', 0)
+        # Título com Ícone
+        title_box = MDBoxLayout(spacing=10, size_hint_y=None, height=dp(30))
+        title_box.add_widget(MDIconButton(icon="silverware-fork-knife", icon_size="20sp", theme_text_color="Primary", disabled=True))
+        title_box.add_widget(MDLabel(text="PLANEJAMENTO ALIMENTAR", font_style="H6", bold=True))
+        col_diet.add_widget(title_box)
+
+        # CARTÃO DE DESTAQUE (META CALÓRICA)
         target_kcal = record.get('target_kcal', 0)
+        goal_text = record.get('diet_goal', '-').upper()
         
-        if tdee > 0 and target_kcal > 0:
-            daily_diff = target_kcal - tdee 
-            weekly_weight_change = (daily_diff * 7) / 7700
-            
-            if weekly_weight_change > 0:
-                previsao_texto = f"Ganhar {weekly_weight_change:.2f} kg/sem"
-            elif weekly_weight_change < 0:
-                previsao_texto = f"Perder {abs(weekly_weight_change):.2f} kg/sem"
-            else:
-                previsao_texto = "Manter Peso"
-        else:
-            previsao_texto = "-"
+        hero_card = MDCard(orientation="vertical", size_hint_y=None, height=dp(90), padding=dp(15), radius=[10], md_bg_color=C_PRIMARY, elevation=2)
+        hero_card.add_widget(MDLabel(text="META CALÓRICA DIÁRIA", theme_text_color="Custom", text_color=(1,1,1,0.8), font_style="Caption", halign="center"))
+        hero_card.add_widget(MDLabel(text=f"{target_kcal:.0f} kcal", theme_text_color="Custom", text_color=(1,1,1,1), font_style="H4", bold=True, halign="center"))
+        hero_card.add_widget(MDLabel(text=f"Objetivo: {goal_text}", theme_text_color="Custom", text_color=(1,1,1,0.8), font_style="Caption", halign="center"))
+        col_diet.add_widget(hero_card)
 
-        content.add_widget(DetailRow("Objetivo", record.get('diet_goal', '-')))
-        content.add_widget(DetailRow("Estimativa", previsao_texto))
-        content.add_widget(DetailRow("Meta BF%", f"{target_bf:.1f}%"))
+        # Detalhes da Dieta
+        col_diet.add_widget(MDLabel(text="", size_hint_y=None, height=dp(5)))
+        tdee = record.get('tdee', 0)
+        diff = target_kcal - tdee
+        weekly = (diff * 7) / 7700
+        change_txt = f"{'Ganhar' if weekly > 0 else 'Perder'} {abs(weekly):.2f} kg/sem"
         
-        add_rows([
-            ("Calorias Dieta", "target_kcal", "kcal"), 
-            ("Proteína", "target_prot", "g"), 
-            ("Carbo", "target_carb", "g"), 
-            ("Gordura", "target_fat", "g")
-        ])
+        card_diet_details = MDCard(orientation="vertical", padding=dp(15), radius=[10], md_bg_color=C_BG_CARD, adaptive_height=True, elevation=0)
+        self.add_detail_row(card_diet_details, "Intensidade", f"{record.get('diet_intensity',0):.0f}%")
+        self.add_detail_row(card_diet_details, "Estimativa", change_txt)
+        card_diet_details.add_widget(MDRectangleFlatButton(size_hint_y=None, height="1dp", size_hint_x=1, md_bg_color=(0.9,0.9,0.9,1))) # Separator
+        self.add_detail_row(card_diet_details, "", "") # Espaço
+        
+        # Macros Coloridos
+        self.create_macro_row(card_diet_details, "Proteína", f"{record.get('target_prot',0):.0f}g", (0, 0.7, 0, 1)) # Verde
+        self.create_macro_row(card_diet_details, "Carboidrato", f"{record.get('target_carb',0):.0f}g", (1, 0.6, 0, 1)) # Laranja
+        self.create_macro_row(card_diet_details, "Gordura", f"{record.get('target_fat',0):.0f}g", (1, 0.2, 0.2, 1)) # Vermelho
+        
+        col_diet.add_widget(card_diet_details)
+        grid.add_widget(col_diet)
 
-        add_header("METABOLISMO")
-        add_rows([
-            ("TMB (Basal)", "tmb", "kcal"), 
-            ("Atividade", "activity_level", ""), 
-            ("GET (Total)", "tdee", "kcal")
-        ])
+        # === COLUNA DIREITA: CORPO & METABOLISMO ===
+        col_body = MDBoxLayout(orientation="vertical", spacing=dp(10), adaptive_height=True)
         
-        add_header("COMPOSIÇÃO CORPORAL")
-        add_rows([
-            ("Gordura Corporal", "bf_percent", "%"), 
-            ("Classif. BF", "bf_class", ""), 
-            ("Massa Gorda", "fat_mass", "kg"), 
-            ("Massa Magra", "lean_mass", "kg"), 
-            ("IMC", "bmi", "kg/m²")
-        ])
+        # Título
+        title_box2 = MDBoxLayout(spacing=10, size_hint_y=None, height=dp(30))
+        title_box2.add_widget(MDIconButton(icon="human-male-height", icon_size="20sp", theme_text_color="Primary", disabled=True))
+        title_box2.add_widget(MDLabel(text="CORPO & METABOLISMO", font_style="H6", bold=True))
+        col_body.add_widget(title_box2)
+
+        card_body = MDCard(orientation="vertical", padding=dp(15), radius=[10], md_bg_color=C_BG_CARD, adaptive_height=True, elevation=0)
         
-        # ScrollView mais alto para acompanhar o novo tamanho do conteúdo
-        scroll = MDScrollView(size_hint_y=None, height="600dp") 
-        scroll.add_widget(content)
+        # Metabolismo
+        card_body.add_widget(MDLabel(text="Energia", font_style="Subtitle2", theme_text_color="Primary"))
+        self.add_detail_row(card_body, "Atividade", record.get('activity_level','-').split('(')[0])
+        self.add_detail_row(card_body, "Basal (TMB)", f"{record.get('tmb',0):.0f} kcal")
+        self.add_detail_row(card_body, "Gasto Total (GET)", f"{record.get('tdee',0):.0f} kcal", is_bold=True)
         
+        # Divisor
+        card_body.add_widget(MDLabel(text="", size_hint_y=None, height=dp(10)))
+        card_body.add_widget(MDRectangleFlatButton(size_hint_y=None, height="1dp", size_hint_x=1, md_bg_color=(0.85,0.85,0.85,1)))
+        card_body.add_widget(MDLabel(text="", size_hint_y=None, height=dp(10)))
+
+        # Composição
+        card_body.add_widget(MDLabel(text="Composição", font_style="Subtitle2", theme_text_color="Primary"))
+        self.add_detail_row(card_body, "Peso Atual", f"{record.get('weight',0)} kg")
+        
+        # BF com cor de alerta
+        bf = record.get('bf_percent', 0)
+        bf_color = (0.8, 0, 0, 1) if bf > 25 else (0, 0.6, 0, 1) if bf < 15 else (0.3, 0.3, 0.3, 1)
+        
+        row_bf = MDBoxLayout(size_hint_y=None, height=dp(30))
+        row_bf.add_widget(MDLabel(text="Gordura Corporal", font_style="Body2", theme_text_color="Secondary"))
+        row_bf.add_widget(MDLabel(text=f"{bf:.1f}%", font_style="H6", bold=True, theme_text_color="Custom", text_color=bf_color, halign="right"))
+        card_body.add_widget(row_bf)
+        
+        self.add_detail_row(card_body, "Massa Magra", f"{record.get('lean_mass',0):.1f} kg")
+        self.add_detail_row(card_body, "Massa Gorda", f"{record.get('fat_mass',0):.1f} kg")
+        
+        col_body.add_widget(card_body)
+        grid.add_widget(col_body)
+
+        main_content.add_widget(grid)
+        scroll.add_widget(main_content)
+
         self.dialog = MDDialog(
-            title=f"Avaliação de {record['date'].split(' ')[0]}", # Simplifica o título para só a data
-            type="custom", 
-            content_cls=scroll, 
-            buttons=[
-                MDFlatButton(
-                    text="FECHAR", 
-                    theme_text_color="Custom", 
-                    text_color=self.theme_cls.primary_color, 
-                    font_style="Button",
-                    on_release=lambda x: self.dialog.dismiss()
-                )
-            ]
+            type="custom",
+            content_cls=scroll,
+            size_hint_x=0.9, # Largo
+            size_hint_y=0.9, # Alto
+            buttons=[MDFlatButton(text="FECHAR", theme_text_color="Primary", on_release=lambda x: self.dialog.dismiss())]
         )
         self.dialog.open()
+
+    def add_detail_row(self, layout, label, value, is_bold=False):
+        row = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(28))
+        row.add_widget(MDLabel(text=label, font_style="Body2", theme_text_color="Secondary", size_hint_x=0.6))
+        row.add_widget(MDLabel(text=str(value), font_style="Body1", bold=is_bold, halign="right", theme_text_color="Primary", size_hint_x=0.4))
+        layout.add_widget(row)
+
+    def create_macro_row(self, layout, label, value, color):
+        row = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(30), spacing=5)
+        # Bolinha colorida
+        dot = MDIconButton(icon="circle", icon_size="10sp", theme_text_color="Custom", text_color=color, size_hint=(None, None), size=(dp(20), dp(30)))
+        row.add_widget(dot)
+        row.add_widget(MDLabel(text=label, font_style="Body2", bold=True, size_hint_x=0.5))
+        row.add_widget(MDLabel(text=value, font_style="Body1", halign="right", size_hint_x=0.4))
+        layout.add_widget(row)
+
+    def open_edit_metabolism_dialog(self, record):
+        """Abre um diálogo para editar Atividade e Intensidade"""
+        content = MDBoxLayout(orientation="vertical", size_hint_y=None, height=dp(280), spacing=dp(15), padding=dp(10))
+        
+        # 1. Seletor de Atividade
+        content.add_widget(MDLabel(text="Nível de Atividade", font_style="Subtitle2"))
+        
+        from kivymd.uix.menu import MDDropdownMenu
+        self.btn_act_select = MDRectangleFlatButton(text=record['activity_level'], size_hint_x=1)
+        
+        menu_items = [{"text": k, "viewclass": "OneLineListItem", "on_release": lambda x=k: self.set_edit_activity(x)} for k in ACTIVITY_LEVELS.keys()]
+        self.menu_activity = MDDropdownMenu(caller=self.btn_act_select, items=menu_items, width_mult=4)
+        self.btn_act_select.bind(on_release=lambda x: self.menu_activity.open())
+        content.add_widget(self.btn_act_select)
+
+        # 2. Seletor de Objetivo (REMOVIDO MDSwitch para evitar erro 'thumb')
+        content.add_widget(MDLabel(text="Objetivo da Dieta", font_style="Subtitle2"))
+        
+        goals_box = MDBoxLayout(orientation='horizontal', spacing=dp(10), size_hint_y=None, height=dp(45))
+        self.btn_edit_cut = MDRaisedButton(text="Cutting", elevation=0, size_hint_x=0.5)
+        self.btn_edit_cut.bind(on_release=lambda x: self.set_edit_goal("Cutting"))
+        
+        self.btn_edit_bulk = MDRaisedButton(text="Bulking", elevation=0, size_hint_x=0.5)
+        self.btn_edit_bulk.bind(on_release=lambda x: self.set_edit_goal("Bulking"))
+        
+        goals_box.add_widget(self.btn_edit_cut)
+        goals_box.add_widget(self.btn_edit_bulk)
+        content.add_widget(goals_box)
+        
+        # 3. Slider de Intensidade
+        content.add_widget(MDLabel(text="Intensidade do Superávit/Déficit", font_style="Subtitle2"))
+        self.slider_edit_int = MDSlider(min=0, max=30, value=record.get('diet_intensity', 10), step=1)
+        self.lbl_edit_int = MDLabel(text=f"{self.slider_edit_int.value:.0f}%", halign="center", font_style="H6", theme_text_color="Primary")
+        
+        # Atualiza o label quando o slider move
+        self.slider_edit_int.bind(value=lambda instance, val: setattr(self.lbl_edit_int, 'text', f"{val:.0f}%"))
+        
+        content.add_widget(self.slider_edit_int)
+        content.add_widget(self.lbl_edit_int)
+
+        # Inicialização
+        self.temp_edit_goal = record['diet_goal']
+        self.update_edit_goal_buttons()
+
+        self.dialog_edit = MDDialog(
+            title="Editar Perfil Metabólico",
+            type="custom",
+            content_cls=content,
+            buttons=[
+                MDFlatButton(text="CANCELAR", on_release=lambda x: self.dialog_edit.dismiss()),
+                MDRaisedButton(text="SALVAR & RECALCULAR", md_bg_color=(0,0.7,0,1), on_release=lambda x: self.save_edited_metabolism(record))
+            ]
+        )
+        self.dialog_edit.open()
+
+    def set_edit_activity(self, text):
+        self.btn_act_select.text = text
+        self.menu_activity.dismiss()
+
+    def set_edit_goal(self, goal):
+        self.temp_edit_goal = goal
+        self.update_edit_goal_buttons()
+
+    def update_edit_goal_buttons(self):
+        # Atualiza visualmente qual botão está selecionado
+        active = self.theme_cls.primary_color
+        inactive = (0.9, 0.9, 0.9, 1)
+        self.btn_edit_cut.md_bg_color = active if self.temp_edit_goal == "Cutting" else inactive
+        self.btn_edit_cut.text_color = (1,1,1,1) if self.temp_edit_goal == "Cutting" else (0,0,0,1)
+        self.btn_edit_bulk.md_bg_color = active if self.temp_edit_goal == "Bulking" else inactive
+        self.btn_edit_bulk.text_color = (1,1,1,1) if self.temp_edit_goal == "Bulking" else (0,0,0,1)
+
+    def save_edited_metabolism(self, record):
+        # 1. Coleta os novos dados do diálogo de edição
+        new_activity_text = self.btn_act_select.text
+        new_activity_factor = ACTIVITY_LEVELS.get(new_activity_text, 1.2)
+        new_goal = self.temp_edit_goal
+        new_intensity = self.slider_edit_int.value
+        
+        # 2. Salva as novas configurações de entrada (Atividade/Meta) no banco
+        self.db.update_assessment_settings(record['id'], new_activity_text, new_goal, new_intensity)
+        
+        # 3. RECALCULA TUDO USANDO A FÓRMULA DE MIFFLIN COM OS NOVOS DADOS
+        # Precisamos garantir que o peso, altura e idade usados aqui sejam os da avaliação original
+        tmb, tdee = CalculatorService.calculate_bmr_tdee(
+            record['sex'], record['weight'], record['height'], record['age'], new_activity_factor
+        )
+        
+        # Recalcula as metas de calorias e macros
+        tk, tp, tc, tf = CalculatorService.calculate_diet_macros(
+            tdee, record['weight'], new_goal, new_intensity, record['prot_g_kg']
+        )
+        
+        # 4. ATUALIZA OS RESULTADOS NO BANCO DE DADOS (Essa parte é vital!)
+        self.db.update_assessment_macros(record['id'], tmb, tdee, tk, tp, tc, tf)
+        
+        # 5. Atualiza o dicionário local 'record' para que a UI mostre os dados novos ao reabrir
+        record.update({
+            'activity_level': new_activity_text, 
+            'diet_goal': new_goal, 
+            'diet_intensity': new_intensity,
+            'tmb': tmb, 
+            'tdee': tdee, 
+            'target_kcal': tk, 
+            'target_prot': tp, 
+            'target_carb': tc, 
+            'target_fat': tf
+        })
+        
+        # 6. Fecha os diálogos e atualiza a tela de nutrição caso ela esteja aberta
+        self.dialog_edit.dismiss()
+        if hasattr(self, 'dialog'): self.dialog.dismiss()
+        
+        # Recarrega a tela de Nutrição com os novos macros alvo
+        self.load_diet_dashboard(self.current_user['id'])
+        
+        # Reabre o modal de detalhes para confirmar que mudou
+        self.show_detail_modal(data=record)
+        self.show_dialog("Sucesso", f"Metas atualizadas! Nova meta: {tk:.0f} kcal")
     def action_send_email(self, record):
         if not self.current_user.get('email'): self.show_dialog("Erro", "Usuário sem email."); return
         pdf_name = f"relatorio_{self.current_user['id']}_{record['id']}.pdf"
